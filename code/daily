@@ -13,3 +13,7 @@
 原本發現無法與"位置資訊"通用
 後來發現將"dailogflow"做成function便可以共用
 加入"講幹話","愛情","吃什麼"...等title供dialogflow使用
+2024/01/08
+APCS實作150分鐘 編譯器花了110操
+openAI token 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
+發現dailogflow與chatGPT排斥

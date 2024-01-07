@@ -1,15 +1,24 @@
+import os
+import google.cloud.dialogflow_v2 as dialogflow
 from flask import Flask, request
 from flask_ngrok import run_with_ngrok
+
+# 載入 json 標準函式庫，處理回傳的資料格式
+import requests, json, time, statistics
+
 # 載入 LINE Message API 相關函式庫
 from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-# 載入 json 標準函式庫，處理回傳的資料格式
-import requests, json, time, statistics 
 
-app = Flask(__name__)
+import qrcode
 
-access_token = 'Gs2gpzDO1/T99ggBEf/NqZfVjjejQ2zDL6iIJciH7MqqMVKkZAhNQL02P/SXx0t/LTkb9o7G0/bjQejhdpPiGdd1HGnhnEEISokwIFikKTYowZFJe0frqjvfJPIeOf+vwvZ/StynJASjIZQCnyt/NwdB04t89/1O/w1cDnyilFU='
-channel_secret = '8de70cc350dc45902920777a64d73df8'
+
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = 'code\key.json' # 金鑰 json
+project_id = 'newagent-kxxt'                                   # dialogflow project id
+language = 'en'                                                # 語系
+session_id = 'ruichen'                                         # 自訂 session id
+
 
 # LINE 回傳圖片函式
 def reply_image(msg, rk, token):
@@ -27,19 +36,19 @@ def reply_image(msg, rk, token):
 
 # 地震資訊函式
 def earth_quake():
-    msg = ['找不到地震資訊','https://example.com/demo.jpg']            # 預設回傳的訊息
+    msg = ['找不到地震資訊','https://example.com/demo.jpg']                     # 預設回傳的訊息
     try:
         code = 'CWA-53CDB49E-D455-4018-BE72-36E6B6700123'
         url = f'https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0016-001?Authorization={code}'
-        e_data = requests.get(url)                                   # 爬取地震資訊網址
-        e_data_json = e_data.json()                                  # json 格式化訊息內容
-        eq = e_data_json['records']['Earthquake']                    # 取出地震資訊
+        e_data = requests.get(url)                                             # 爬取地震資訊網址
+        e_data_json = e_data.json()                                            # json 格式化訊息內容
+        eq = e_data_json['records']['Earthquake']                              # 取出地震資訊
         for i in eq:
-            loc = i['EarthquakeInfo']['Epicenter']['Location']       # 地震地點
+            loc = i['EarthquakeInfo']['Epicenter']['Location']                 # 地震地點
             val = i['EarthquakeInfo']['EarthquakeMagnitude']['MagnitudeValue'] # 地震規模
-            dep = i['EarthquakeInfo']['FocalDepth']              # 地震深度
-            eq_time = i['EarthquakeInfo']['OriginTime']              # 地震時間
-            img = i['ReportImageURI']                                # 地震圖
+            dep = i['EarthquakeInfo']['FocalDepth']                            # 地震深度
+            eq_time = i['EarthquakeInfo']['OriginTime']                        # 地震時間
+            img = i['ReportImageURI']                                          # 地震圖
             msg = [f'{loc}，芮氏規模 {val} 級，深度 {dep} 公里，發生時間 {eq_time}。', img]
             break     # 取出第一筆資料後就 break
         return msg    # 回傳 msg
@@ -237,44 +246,74 @@ def aqi(address):
         return msg    # 回傳 msg
     except:
         return msg    # 如果取資料有發生錯誤，直接回傳 msg
-    
 
+# dialogflow 處理自然語言
+def dialogflowFn(text,reply_token,access_token,user_id):
+    session_client = dialogflow.SessionsClient()
+    session = session_client.session_path(project_id, session_id)
+    text_input = dialogflow.types.TextInput(text=text, language_code=language)
+    query_input = dialogflow.types.QueryInput(text=text_input)
+    print(query_input)
+    try:
+        response = session_client.detect_intent(session=session, query_input=query_input)
+        print("input:", response.query_result.query_text)
+        print("intent:", response.query_result.intent.display_name)
+        intent = response.query_result.intent.display_name
+        print("reply:", response.query_result.fulfillment_text)
+        
+        if intent == '雷達回波圖':           # 如果是雷達回波圖相關的文字
+            # 傳送雷達回波圖 ( 加上時間戳記 )
+            reply_image('https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-001.png', reply_token, access_token)
+        elif intent == '地震':              # 如果是地震相關的文字
+            msg = earth_quake()                               # 爬取地震資訊
+            push_message(msg[0], user_id, access_token)       # 傳送地震資訊 ( 用 push 方法，因為 reply 只能用一次 )
+            reply_image(msg[1], reply_token, access_token)    # 傳送地震圖片 ( 用 reply 方法 )
+        else:
+            push_message(response.query_result.fulfillment_text, user_id, access_token)
+    except:
+        return 'error'
+
+app = Flask(__name__)
 
 @app.route("/", methods=['POST'])
 def linebot():
-    body = request.get_data(as_text=True)    # 取得收到的訊息內容
+    body = request.get_data(as_text=True)                    # 取得收到的訊息內容
     try:
-        line_bot_api = LineBotApi(access_token)               # 確認 token 是否正確
-        handler = WebhookHandler(channel_secret)              # 確認 secret 是否正確
-        signature = request.headers['X-Line-Signature']       # 加入回傳的 headers
-        handler.handle(body, signature)                       # 綁定訊息回傳的相關資訊
-        json_data = json.loads(body)                          # 轉換內容為 json 格式
-        reply_token = json_data['events'][0]['replyToken']    # 取得回傳訊息的 Token ( reply message 使用 )
-        user_id = json_data['events'][0]['source']['userId']  # 取得使用者 ID ( push message 使用 )
-        print(json_data)                                      # 印出內容
-        if 'message' in json_data['events'][0]:               # 如果傳送的是 message
-            if json_data['events'][0]['message']['type'] == 'location':
-                address = json_data['events'][0]['message']['address'].replace('台','臺')
-                # 回覆爬取到的相關氣象資訊
-                reply_message(f'{address}\n\n{current_weather(address)}\n\n{aqi(address)}\n\n{forecast(address)}', reply_token, access_token)
-                print(address)
-            elif json_data['events'][0]['message']['type'] == 'text':   # 如果 message 的類型是文字 text
-                text = json_data['events'][0]['message']['text']      # 取出文字
-                if text == '!help' or text == '！help':
-                    line_bot_api.reply_message(reply_token,TextSendMessage(text='"雷達回波圖"\n傳送最新的台灣周圍雷達迴波圖\n"地震資訊"\n傳送最新有感地震資訊\n"指定地點當前氣象狀況"\n左下角+號 位置資訊\n以上')) 
-                elif text == '雷達回波圖' or text == '雷達回波':           # 如果是雷達回波圖相關的文字
-                    # 傳送雷達回波圖 ( 加上時間戳記 )
-                    reply_image('https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-001.png', reply_token, access_token)
-                elif text == '地震資訊' or text == '地震':              # 如果是地震相關的文字
-                    msg = earth_quake()                               # 爬取地震資訊
-                    push_message(msg[0], user_id, access_token)       # 傳送地震資訊 ( 用 push 方法，因為 reply 只能用一次 )
-                    reply_image(msg[1], reply_token, access_token)    # 傳送地震圖片 ( 用 reply 方法 )
-                else:
-                    line_bot_api.reply_message(reply_token,TextSendMessage(text='好了別吵 有問題就用"!help"'))
+        json_data = json.loads(body)                         # json 格式化訊息內容
+        access_token = 'Gs2gpzDO1/T99ggBEf/NqZfVjjejQ2zDL6iIJciH7MqqMVKkZAhNQL02P/SXx0t/LTkb9o7G0/bjQejhdpPiGdd1HGnhnEEISokwIFikKTYowZFJe0frqjvfJPIeOf+vwvZ/StynJASjIZQCnyt/NwdB04t89/1O/w1cDnyilFU='
+        secret = '8de70cc350dc45902920777a64d73df8'
+        line_bot_api = LineBotApi(access_token)              # 確認 token 是否正確
+        handler = WebhookHandler(secret)                     # 確認 secret 是否正確
+        signature = request.headers['X-Line-Signature']      # 加入回傳的 headers
+        handler.handle(body, signature)                      # 綁定訊息回傳的相關資訊
+        reply_token = json_data['events'][0]['replyToken']   # 取得回傳訊息的 Token
+        user_id = json_data['events'][0]['source']['userId'] # 取得使用者 ID ( push message 使用 )
+        type = json_data['events'][0]['message']['type']     # 取得 LINe 收到的訊息類型
+        msg = json_data['events'][0]['message']['text']
+        title_msg = msg[:6].lower()
+        if json_data['events'][0]['message']['type'] == 'location':
+            address = json_data['events'][0]['message']['address'].replace('台','臺')
+            # 回覆爬取到的相關氣象資訊
+            reply_message(f'{address}\n\n{current_weather(address)}\n\n{aqi(address)}\n\n{forecast(address)}', reply_token, access_token)
+            print(address)
+        elif type=='text':
+            if title_msg == "qrcode":
+                print("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                img = qrcode.make(msg[7:]) 
+                img.show() 
+                img.save('qrcode.png')
+                reply_image('qrcode.png', reply_token, access_token)
+            else:
+                msg = json_data['events'][0]['message']['text']      # 取得 LINE 收到的文字訊息
+                print(msg)                                           # 印出內容
+                dialogflowFn(msg,reply_token,access_token,user_id)           # dialogflow 處理後回傳文字
+        else:
+            reply = '我看不懂～'
+            print(reply)
+            line_bot_api.reply_message(reply_token,TextSendMessage(reply))# 回傳訊息
     except:
-        print('error')                       # 如果發生錯誤，印出 error
-    return 'OK'                              # 驗證 Webhook 使用，不能省略
+        print(body)                                          # 如果發生錯誤，印出收到的內容
+    return 'OK'                                              # 驗證 Webhook 使用，不能省略
 
 if __name__ == "__main__":
-  run_with_ngrok(app)                        # 串連 ngrok 服務
-  app.run()
+    app.run()
