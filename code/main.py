@@ -1,4 +1,4 @@
-import os
+import os,base64,requests
 import google.cloud.dialogflow_v2 as dialogflow
 from flask import Flask, request
 from flask_ngrok import run_with_ngrok
@@ -277,7 +277,8 @@ app = Flask(__name__)
 def linebot():
     body = request.get_data(as_text=True)                    # 取得收到的訊息內容
     try:
-        json_data = json.loads(body)                         # json 格式化訊息內容
+        json_data = json.loads(body) 
+        print(body)                        # json 格式化訊息內容
         access_token = 'Gs2gpzDO1/T99ggBEf/NqZfVjjejQ2zDL6iIJciH7MqqMVKkZAhNQL02P/SXx0t/LTkb9o7G0/bjQejhdpPiGdd1HGnhnEEISokwIFikKTYowZFJe0frqjvfJPIeOf+vwvZ/StynJASjIZQCnyt/NwdB04t89/1O/w1cDnyilFU='
         secret = '8de70cc350dc45902920777a64d73df8'
         line_bot_api = LineBotApi(access_token)              # 確認 token 是否正確
@@ -295,7 +296,28 @@ def linebot():
         elif type=='text':
             msg = json_data['events'][0]['message']['text']      # 取得 LINE 收到的文字訊息
             print(msg)                                           # 印出內容
-            dialogflowFn(msg,reply_token,access_token,user_id)           # dialogflow 處理後回傳文字
+            dialogflowFn(msg,reply_token,access_token,user_id)   # dialogflow 處理後回傳文字
+        #    
+        # elif type=='image':
+        #     msgID = json_data['events'][0]['message']['id']
+        #     message_content = line_bot_api.get_message_content(msgID)
+        #     with open(f'{msgID}.jpg', 'wb') as fd:
+        #         fd.write(message_content.content)
+            # res = requests.put(
+            #     headers={
+            #         "Accept": "application/vnd.github+json",
+            #         "Authorization": f"Bearer {os.getenv('GITHUB')}"
+            #     },
+            #     json={
+            #         "message": f"✨ Commit",
+            #         "committer": {"name": "chanaaaaaaa", "email": os.getenv('king960129@gmail.com')},
+            #         "content": f"{base64.b64encode(message_content).decode('ascii')}",
+            #         "branch": "main"},
+            #     url=f"https://github.com/chanaaaaaaa/line-bot/blob/main/image/qrcode.png"
+            # )
+
+            # print(res.status_code)
+            # print(res.json())
         else:
             reply = '我看不懂～'
             print(reply)
